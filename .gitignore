@@ -1,4 +1,6 @@
 dask-worker-space
+*.csv
+*.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
