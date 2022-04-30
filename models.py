@@ -59,6 +59,7 @@ metrics = RankingMetrics(pred_and_labels)
 print("Baseline ----------------")
 print("Precision:", metrics.precisionAt(n_recs))
 print("MAP:", metrics.meanAveragePrecision)
+print("NDCG:", metrics.ndcgAt(n_recs))
 
 # ==========================================================================
 # ALS MODEL
@@ -89,3 +90,4 @@ evaluator = RankingEvaluator()
 print("ALS ----------------")
 print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: 100}))
 print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: 100}))
+print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: 100}))
