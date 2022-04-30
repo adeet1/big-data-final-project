@@ -12,13 +12,12 @@ spark = SparkSession.builder.appName('part1').getOrCreate()
 # IMPORT DATA
 # ==========================================================================
 
-train_df_name = "ratings-small-train.csv"
-val_df_name = "ratings-small-val.csv"
+data_size = "small"
 
-train_df = pd.read_csv(train_df_name)
+train_df = pd.read_csv("ratings-" + data_size + "-train.csv")
 print("Train data:", train_df.shape)
 
-val_df = pd.read_csv(val_df_name)
+val_df = pd.read_csv("ratings-" + data_size + "-val.csv")
 print("Val data:", val_df.shape)
 
 # ==========================================================================
@@ -65,8 +64,8 @@ print("NDCG:", metrics.ndcgAt(n_recs))
 # ALS MODEL
 # ==========================================================================
 
-train_df = spark.read.csv(train_df_name, header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
-val_df = spark.read.csv(val_df_name, header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
+train_df = spark.read.csv("ratings-" + data_size + "-train.csv", header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
+val_df = spark.read.csv("ratings-" + data_size + "-val.csv", header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
 
 # Fit the model
 als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
@@ -88,6 +87,6 @@ pred_and_labels = spark.createDataFrame(list(zip(R_val, D)), "prediction: array<
 
 evaluator = RankingEvaluator()
 print("ALS ----------------")
-print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: 100}))
-print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: 100}))
-print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: 100}))
+print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: n_recs}))
+print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: n_recs}))
+print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: n_recs}))
