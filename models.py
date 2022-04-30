@@ -2,14 +2,28 @@ import pandas as pd
 import numpy as np
 from pyspark.sql import SparkSession
 from pyspark.mllib.evaluation import RankingMetrics
+from pyspark.ml.recommendation import ALS
+from pyspark.ml.evaluation import RankingEvaluator
+from pyspark.sql.functions import collect_list
 
 spark = SparkSession.builder.appName('part1').getOrCreate()
 
-train_df = pd.read_csv("ratings-small-train.csv")
+# ==========================================================================
+# IMPORT DATA
+# ==========================================================================
+
+train_df_name = "ratings-small-train.csv"
+val_df_name = "ratings-small-val.csv"
+
+train_df = pd.read_csv(train_df_name)
 print("Train data:", train_df.shape)
 
-val_df = pd.read_csv("ratings-small-val.csv")
+val_df = pd.read_csv(val_df_name)
 print("Val data:", val_df.shape)
+
+# ==========================================================================
+# BASELINE MODEL
+# ==========================================================================
 
 """
 Compute the mean rating of each movie by grouping by movieId, and aggregating by mean.
@@ -25,6 +39,7 @@ mean_ratings = train_df[["movieId", "rating"]].groupby("movieId").mean()["rating
 
 # Number of users in the validation data
 users = val_df['userId'].unique()
+users.sort()
 n_users = len(users)
 
 # Number of movies that we recommend to each user
@@ -36,10 +51,41 @@ R = [R_i.tolist()] * n_users # we recommend the same movies to everyone
 
 # We create a list of arrays, where D[i] = an array of validation data of the highest-rated movies by user i
 val_df_group = val_df.sort_values("rating", ascending=False).groupby("userId")
-D = list(map(lambda user: val_df_group.get_group(user)["movieId"].values[0:100].tolist(), users))
+D = list(map(lambda user: val_df_group.get_group(user)["movieId"].values.astype(float).tolist(), users))
 
 # Evaluate model performance
 pred_and_labels = spark.sparkContext.parallelize(list(zip(R, D)))
 metrics = RankingMetrics(pred_and_labels)
-print(metrics.precisionAt(100))
-print(metrics.meanAveragePrecision)
+print("Baseline ----------------")
+print("Precision:", metrics.precisionAt(n_recs))
+print("MAP:", metrics.meanAveragePrecision)
+
+# ==========================================================================
+# ALS MODEL
+# ==========================================================================
+
+train_df = spark.read.csv(train_df_name, header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
+val_df = spark.read.csv(val_df_name, header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
+
+# Fit the model
+als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+model = als.fit(train_df)
+
+# Compute the movie recommendations for all users
+R = model.recommendForAllUsers(n_recs).select("userId", "recommendations.movieId")
+
+# Get the movies we recommended for the validation users
+R_val = R.filter(R.userId.isin(users.tolist()))
+R_val = R_val.sort("userId")
+
+# Evaluate model on the validation users
+R_val = R_val.select("movieId").collect()
+R_val = list(map(lambda row: row.movieId, R_val))
+R_val = list(map(lambda arr: np.array(arr).astype("double").tolist(), R_val)) # convert ints to floats
+
+pred_and_labels = spark.createDataFrame(list(zip(R_val, D)), "prediction: array<double>, label: array<double>")
+
+evaluator = RankingEvaluator()
+print("ALS ----------------")
+print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: 100}))
+print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: 100}))
