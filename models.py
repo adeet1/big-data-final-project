@@ -1,7 +1,14 @@
 import pandas as pd
 import numpy as np
+from time import time
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 import lightfm
+from lightfm import LightFM
 from lightfm.data import Dataset
+from lightfm.evaluation import precision_at_k
+
 from pyspark.sql import SparkSession
 from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.ml.recommendation import ALS
@@ -61,24 +68,7 @@ print("Baseline ----------------")
 print("Precision:", metrics.precisionAt(n_recs))
 print("MAP:", metrics.meanAveragePrecision)
 print("NDCG:", metrics.ndcgAt(n_recs))
-
-# ==========================================================================
-# LIGHTFM MODEL
-# ==========================================================================
-
-train_lfm = Dataset()
-train_lfm.fit(users=train_df['userId'].unique(), items=train_df['movieId'].unique())
-
-val_lfm = Dataset()
-val_lfm.fit(users=val_df['userId'].unique(), items=val_df['movieId'].unique())
-
-user_movie_pair = lambda df, i: (df["userId"][i], df["movieId"][i], df["rating"][i])
-
-data = pd.Series(np.arange(train_df.shape[0])).map(lambda i: user_movie_pair(train_df, i))
-train_interactions, train_w = train_lfm.build_interactions(data)
-
-data = pd.Series(np.arange(val_df.shape[0])).map(lambda i: user_movie_pair(val_df, i))
-val_interactions, val_w = val_lfm.build_interactions(data)
+        
 
 # ==========================================================================
 # ALS MODEL
@@ -110,3 +100,54 @@ print("ALS ----------------")
 print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: n_recs}))
 print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: n_recs}))
 print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: n_recs}))
+
+
+# ==========================================================================
+# LIGHTFM MODEL
+# ==========================================================================
+
+def lightfm_preprocessing(train_df, val_df):
+    
+    full_df = pd.concat([train_df, val_df])
+    
+    lfm_object = Dataset()
+    lfm_object.fit(users=full_df['userId'].unique(), items=full_df['movieId'].unique())
+    
+    user_movie_pair = lambda df, i: (df["userId"][i], df["movieId"][i], df["rating"][i])
+    
+    data = pd.Series(np.arange(train_df.shape[0])).map(lambda i: user_movie_pair(train_df, i))
+    train_interactions, train_w = lfm_object.build_interactions(data)
+    
+    data = pd.Series(np.arange(val_df.shape[0])).map(lambda i: user_movie_pair(val_df, i))
+    val_interactions, val_w = lfm_object.build_interactions(data)
+    
+    return train_interactions, train_w, val_interactions, val_w
+    
+
+precision_k_list, runtime_list = [], []
+
+#percent_train = [0.001, 0.005, 0.01, 0.05, 0.1] # ENABLE THIS FOR THE BIG DATASET
+percent_train = [0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1]
+for pct in percent_train:
+    print('Model with {}% of training data'.format(100*pct))
+    sample_train = train_df.sample(frac=pct, replace=False).reset_index()
+    
+    if sample_train.isnull().values.any():
+        print('Check null values')
+    
+    train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(sample_train, val_df)
+        
+    start_t = time()
+    model = LightFM(loss='warp', no_components=75, user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
+    end_t = time()
+    precision_k = precision_at_k(model, val_interactions, k=100).mean()
+    print("Precision at k: {}%, runtime: {}s".format(round(100*precision_k, 2), round(end_t - start_t, 5)))
+    
+    precision_k_list.append(precision_k)
+    runtime_list.append(end_t - start_t)
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+sns.lineplot(ax=axes[0], x=percent_train, y=precision_k_list)
+axes[0].set_title('Precision at k vs. % training set')
+sns.lineplot(ax=axes[1], x=percent_train, y=runtime_list)
+axes[1].set_title('Runtime vs. % training set')
