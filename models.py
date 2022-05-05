@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+import lightfm
+from lightfm.data import Dataset
 from pyspark.sql import SparkSession
 from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.ml.recommendation import ALS
@@ -59,6 +61,24 @@ print("Baseline ----------------")
 print("Precision:", metrics.precisionAt(n_recs))
 print("MAP:", metrics.meanAveragePrecision)
 print("NDCG:", metrics.ndcgAt(n_recs))
+
+# ==========================================================================
+# LIGHTFM MODEL
+# ==========================================================================
+
+train_lfm = Dataset()
+train_lfm.fit(users=train_df['userId'].unique(), items=train_df['movieId'].unique())
+
+val_lfm = Dataset()
+val_lfm.fit(users=val_df['userId'].unique(), items=val_df['movieId'].unique())
+
+user_movie_pair = lambda df, i: (df["userId"][i], df["movieId"][i], df["rating"][i])
+
+data = pd.Series(np.arange(train_df.shape[0])).map(lambda i: user_movie_pair(train_df, i))
+train_interactions, train_w = train_lfm.build_interactions(data)
+
+data = pd.Series(np.arange(val_df.shape[0])).map(lambda i: user_movie_pair(val_df, i))
+val_interactions, val_w = val_lfm.build_interactions(data)
 
 # ==========================================================================
 # ALS MODEL
