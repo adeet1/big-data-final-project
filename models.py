@@ -29,6 +29,7 @@ print("Train data:", train_df.shape)
 val_df = pd.read_csv("ratings-" + data_size + "-val.csv")
 print("Val data:", val_df.shape)
 
+
 # ==========================================================================
 # BASELINE MODEL
 # ==========================================================================
@@ -78,7 +79,7 @@ train_df = spark.read.csv("ratings-" + data_size + "-train.csv", header=True, sc
 val_df = spark.read.csv("ratings-" + data_size + "-val.csv", header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
 
 # Fit the model
-als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating")
 model = als.fit(train_df)
 
 # Compute the movie recommendations for all users
@@ -101,9 +102,15 @@ print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "
 print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: n_recs}))
 print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: n_recs}))
 
+# ==========================================================================
+# HYPERPARAMETER TUNING (ALS)
+# ==========================================================================
+
+
+
 
 # ==========================================================================
-# LIGHTFM MODEL
+# EXTENSION 1: LIGHTFM MODEL
 # ==========================================================================
 
 def lightfm_preprocessing(train_df, val_df):
@@ -123,8 +130,93 @@ def lightfm_preprocessing(train_df, val_df):
     
     return train_interactions, train_w, val_interactions, val_w
     
+train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(sample_train, val_df)
+  
+model = LightFM(loss='warp', no_components=75, user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
 
-precision_k_list, runtime_list = [], []
+precision_k = precision_at_k(model, val_interactions, k=100).mean()
+      
+  
+# ==========================================================================
+# HYPERPARAMETER TUNING (LIGHTFM)
+# ==========================================================================
+#%%
+from sklearn.model_selection import ParameterGrid
+#"{'item_alpha': 1e-08, 'learning_rate': 0.5, 'learning_schedule': 'adadelta', 'loss': 'bpr', 'max_sampled': 5, 'no_components': 32, 'user_alpha': 1e-12}"
+# 0.17278689
+parameters = {
+    "no_components": [5, 32, 100],
+    "learning_schedule": ["adagrad", "adadelta"],
+    "loss": ["bpr", "warp"],
+    "learning_rate": [0.01, 0.1, 0.5],
+    "item_alpha": [1e-12, 1e-8],
+    "user_alpha": [1e-12, 1e-8],
+    "max_sampled": [5, 10],
+    }
+
+#"{'item_alpha': 1e-08, 'learning_rate': 0.01, 'learning_schedule': 'adadelta', 'loss': 'bpr', 'max_sampled': 5, 'no_components': 32, 'user_alpha': 1e-12}"
+# 0.16631149
+parameters = {
+    "no_components": [5, 32, 100],
+    "learning_schedule": ["adagrad", "adadelta"],
+    "loss": ["bpr", "warp"],
+    "learning_rate": [0.01, 0.1, 0.5],
+    "item_alpha": [1e-8],
+    "user_alpha": [1e-12],
+    "max_sampled": [5, 10],
+    }
+
+#"{'item_alpha': 1e-08, 'learning_rate': 0.5, 'learning_schedule': 'adadelta', 'loss': 'bpr', 'max_sampled': 5, 'no_components': 25, 'user_alpha': 1e-12}"
+#0.17344262
+parameters = {
+    "no_components": [25, 32, 40, 50, 75],
+    "learning_schedule": ["adadelta"],
+    "loss": ["bpr", "warp"],
+    "learning_rate": [0.01, 0.1, 0.5],
+    "item_alpha": [1e-8],
+    "user_alpha": [1e-12],
+    "max_sampled": [5, 10],
+    }
+
+#"{'item_alpha': 1e-08, 'learning_rate': 0.5, 'learning_schedule': 'adadelta', 'loss': 'bpr', 'max_sampled': 10, 'no_components': 20, 'user_alpha': 1e-12}"
+#0.17032787
+parameters = {
+    "no_components": np.arange(15,30),
+    "learning_schedule": ["adadelta"],
+    "loss": ["bpr"],
+    "learning_rate": [0.001, 0.01, 0.1, 0.25, 0.5, 1],
+    "item_alpha": [1e-5, 1e-8, 1e-10],
+    "user_alpha": [1e-10, 1e-12, 1e-14],
+    "max_sampled": [5, 10],
+    }
+
+train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(train_df, val_df)
+start_t = time()
+gridsearch_results = {}
+param_grid = ParameterGrid(parameters)
+for dict_ in param_grid:
+    model = LightFM(no_components=dict_['no_components'], learning_schedule=dict_['learning_schedule'], loss=dict_['loss'],
+                    learning_rate=dict_['learning_rate'], item_alpha=dict_['item_alpha'], user_alpha=dict_['user_alpha'],
+                    max_sampled=dict_['max_sampled'])
+    
+    model.fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
+
+    precision_k = precision_at_k(model, val_interactions, k=100).mean()
+    gridsearch_results[str(dict_)] = precision_k
+    print("{} -> Precision at k: {}".format(str(dict_), precision_k))
+    
+end_t = time()
+print("The grid search took {} minutes".format(round((end_t-start_t)/60, 2)))
+print("The best hyper-parameters are: {}, with an associated precision at k of {}".format(
+    max(gridsearch_results, key=gridsearch_results.get), max(gridsearch_results.values())))
+
+
+# ==========================================================================
+# LIGHTFM VS. ALS
+# ==========================================================================
+
+lightfm_precision_k, lightfm_runtime_list = [], []
+als_precision_k, als_runtime_list = [], []
 
 #percent_train = [0.001, 0.005, 0.01, 0.05, 0.1] # ENABLE THIS FOR THE BIG DATASET
 percent_train = [0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1]
@@ -132,22 +224,45 @@ for pct in percent_train:
     print('Model with {}% of training data'.format(100*pct))
     sample_train = train_df.sample(frac=pct, replace=False).reset_index()
     
-    if sample_train.isnull().values.any():
-        print('Check null values')
-    
     train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(sample_train, val_df)
         
     start_t = time()
-    model = LightFM(loss='warp', no_components=75, user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
+    model = LightFM(no_components=32, loss='warp', , user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
     end_t = time()
     precision_k = precision_at_k(model, val_interactions, k=100).mean()
+    
     print("Precision at k: {}%, runtime: {}s".format(round(100*precision_k, 2), round(end_t - start_t, 5)))
     
     precision_k_list.append(precision_k)
     runtime_list.append(end_t - start_t)
 
+
 fig, axes = plt.subplots(1, 2, figsize=(15, 5))
 sns.lineplot(ax=axes[0], x=percent_train, y=precision_k_list)
 axes[0].set_title('Precision at k vs. % training set')
+axes[0].set_xlabel('% training set')
+axes[0].set_ylabel('Precision at k')
 sns.lineplot(ax=axes[1], x=percent_train, y=runtime_list)
 axes[1].set_title('Runtime vs. % training set')
+axes[1].set_xlabel('% training set')
+axes[1].set_ylabel('Runtime')
+
+
+# ==========================================================================
+# EXTENSION 2: COLD START PROBLEM
+# ==========================================================================
+
+
+tags_df = pd.read_csv('tags.csv')
+movies_df = pd.read_csv('movies.csv', index_col='movieId')
+
+movies_df['release_year'] = movies_df['title'].map(lambda x: x[-5:-1])
+movies_df.drop('title', axis=1, inplace=True)
+
+movies_df['genres'] = movies_df['genres'].map(lambda x: x.split('|'))
+movies_df = movies_df.explode('genres')
+
+tags_df.drop('timestamp', axis=1, inplace=True)
+tags_df['tag'] = tags_df['tag'].map(lambda x: x.lower().split(' '))
+tags_df = tags_df.explode('tag')
+
