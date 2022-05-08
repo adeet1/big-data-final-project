@@ -14,6 +14,8 @@ from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.ml.recommendation import ALS
 from pyspark.ml.evaluation import RankingEvaluator
 from pyspark.sql.functions import collect_list
+from sklearn.model_selection import ParameterGrid
+import tqdm
 
 spark = SparkSession.builder.appName('part1').getOrCreate()
 
@@ -28,7 +30,6 @@ print("Train data:", train_df.shape)
 
 val_df = pd.read_csv("ratings-" + data_size + "-val.csv")
 print("Val data:", val_df.shape)
-
 
 # ==========================================================================
 # BASELINE MODEL
@@ -69,7 +70,7 @@ print("Baseline ----------------")
 print("Precision:", metrics.precisionAt(n_recs))
 print("MAP:", metrics.meanAveragePrecision)
 print("NDCG:", metrics.ndcgAt(n_recs))
-        
+
 
 # ==========================================================================
 # ALS MODEL
@@ -82,19 +83,24 @@ val_df = spark.read.csv("ratings-" + data_size + "-val.csv", header=True, schema
 als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating")
 model = als.fit(train_df)
 
-# Compute the movie recommendations for all users
-R = model.recommendForAllUsers(n_recs).select("userId", "recommendations.movieId")
+def evaluate_ALS(model, users=users, n_recs=100):
+    
+    # Compute the movie recommendations for all users
+    R = model.recommendForAllUsers(n_recs).select("userId", "recommendations.movieId")
 
-# Get the movies we recommended for the validation users
-R_val = R.filter(R.userId.isin(users.tolist()))
-R_val = R_val.sort("userId")
+    # Get the movies we recommended for the validation users
+    R_val = R.filter(R.userId.isin(users.tolist())).sort("userId")
 
-# Evaluate model on the validation users
-R_val = R_val.select("movieId").collect()
-R_val = list(map(lambda row: row.movieId, R_val))
-R_val = list(map(lambda arr: np.array(arr).astype("double").tolist(), R_val)) # convert ints to floats
+    # Evaluate model on the validation users
+    R_val = R_val.select("movieId").collect()
+    R_val = list(map(lambda row: row.movieId, R_val))
+    R_val = list(map(lambda arr: np.array(arr).astype("double").tolist(), R_val)) # convert ints to floats
 
-pred_and_labels = spark.createDataFrame(list(zip(R_val, D)), "prediction: array<double>, label: array<double>")
+    pred_and_labels = spark.createDataFrame(list(zip(R_val, D)), "prediction: array<double>, label: array<double>")
+
+    return pred_and_labels
+
+pred_and_labels = evaluate_ALS(model)
 
 evaluator = RankingEvaluator()
 print("ALS ----------------")
@@ -102,20 +108,60 @@ print("Precision:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "
 print("MAP:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "meanAveragePrecision", evaluator.k: n_recs}))
 print("NDCG:", evaluator.evaluate(pred_and_labels, {evaluator.metricName: "ndcgAtK", evaluator.k: n_recs}))
 
+"""
 # ==========================================================================
 # HYPERPARAMETER TUNING (ALS)
 # ==========================================================================
+#"{'rank': 100, 'regParam': 0.01}"
+#0.10893442
+parameters = {
+    "rank": np.arange(50,101,10),
+    "regParam": [0.001, 0.01, 0.1]
+    }
 
+#{'rank': 110, 'regParam': 0.01},
+#0.11245901
+parameters = {
+    "rank": np.arange(110,150,10),
+    "regParam": [0.01]
+    }
 
+#{'rank': 110, 'regParam': 0.01},
+#0.11245901
+parameters = {
+    "rank": np.arange(105,115,1),
+    "regParam": [0.01]
+    }
 
+evaluator = RankingEvaluator()
+start_t = time()
+gridsearch_results = {}
+param_grid = ParameterGrid(parameters)
+for dict_ in tqdm.tqdm(param_grid):
+
+    als_model = ALS(rank=dict_['rank'], regParam=dict_['regParam'],
+                    userCol="userId", itemCol="movieId", ratingCol="rating").fit(train_df)
+    
+    pred_and_labels = evaluate_ALS(als_model)
+    
+
+    gridsearch_results[str(dict_)] = evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: n_recs})
+    print("{} -> Precision at k: {}".format(str(dict_), evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: n_recs})))
+    
+end_t = time()
+print("The grid search took {} minutes".format(round((end_t-start_t)/60, 2)))
+print("The best hyper-parameters are: {}, with an associated precision at k of {}".format(
+    max(gridsearch_results, key=gridsearch_results.get), max(gridsearch_results.values())))
+"""
 
 # ==========================================================================
 # EXTENSION 1: LIGHTFM MODEL
 # ==========================================================================
 
 def lightfm_preprocessing(train_df, val_df):
-    
-    full_df = pd.concat([train_df, val_df])
+    train_df = train_df.toPandas()
+    val_df = val_df.toPandas()
+    full_df = pd.concat([train_df, val_df], ignore_index=True)
     
     lfm_object = Dataset()
     lfm_object.fit(users=full_df['userId'].unique(), items=full_df['movieId'].unique())
@@ -130,18 +176,20 @@ def lightfm_preprocessing(train_df, val_df):
     
     return train_interactions, train_w, val_interactions, val_w
     
-train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(sample_train, val_df)
+train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(train_df, val_df)
   
 model = LightFM(loss='warp', no_components=75, user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
 
 precision_k = precision_at_k(model, val_interactions, k=100).mean()
-      
-  
+
+
+
+"""
 # ==========================================================================
 # HYPERPARAMETER TUNING (LIGHTFM)
 # ==========================================================================
-#%%
-from sklearn.model_selection import ParameterGrid
+
+
 #"{'item_alpha': 1e-08, 'learning_rate': 0.5, 'learning_schedule': 'adadelta', 'loss': 'bpr', 'max_sampled': 5, 'no_components': 32, 'user_alpha': 1e-12}"
 # 0.17278689
 parameters = {
@@ -194,7 +242,7 @@ train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(tra
 start_t = time()
 gridsearch_results = {}
 param_grid = ParameterGrid(parameters)
-for dict_ in param_grid:
+for dict_ in tqdm.tqdm(param_grid):
     model = LightFM(no_components=dict_['no_components'], learning_schedule=dict_['learning_schedule'], loss=dict_['loss'],
                     learning_rate=dict_['learning_rate'], item_alpha=dict_['item_alpha'], user_alpha=dict_['user_alpha'],
                     max_sampled=dict_['max_sampled'])
@@ -209,45 +257,59 @@ end_t = time()
 print("The grid search took {} minutes".format(round((end_t-start_t)/60, 2)))
 print("The best hyper-parameters are: {}, with an associated precision at k of {}".format(
     max(gridsearch_results, key=gridsearch_results.get), max(gridsearch_results.values())))
-
+"""
 
 # ==========================================================================
 # LIGHTFM VS. ALS
 # ==========================================================================
 
-lightfm_precision_k, lightfm_runtime_list = [], []
-als_precision_k, als_runtime_list = [], []
+lightfm_precision_k_list, lightfm_runtime_list = [], []
+als_precision_k_list, als_runtime_list = [], []
 
 #percent_train = [0.001, 0.005, 0.01, 0.05, 0.1] # ENABLE THIS FOR THE BIG DATASET
-percent_train = [0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1]
-for pct in percent_train:
+percent_train = [0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0]
+for pct in tqdm.tqdm(percent_train):
     print('Model with {}% of training data'.format(100*pct))
-    sample_train = train_df.sample(frac=pct, replace=False).reset_index()
+    sample_train = train_df.sample(fraction=pct, withReplacement=False)#.reset_index()
+ 
+    # ALS model
+    start_t = time()
+    als_model = ALS(rank=110, regParam=0.01, userCol="userId",
+                    itemCol="movieId", ratingCol="rating").fit(sample_train)
+    end_t = time()
+    pred_and_labels = evaluate_ALS(als_model)
     
+    als_precision_k_list.append(evaluator.evaluate(pred_and_labels, {evaluator.metricName: "precisionAtK", evaluator.k: n_recs}))
+    als_runtime_list.append(end_t - start_t)
+    
+    # LightFM model
     train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(sample_train, val_df)
         
     start_t = time()
-    model = LightFM(no_components=32, loss='warp', , user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
+    model = LightFM(no_components=32, loss='warp', user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
     end_t = time()
     precision_k = precision_at_k(model, val_interactions, k=100).mean()
     
     print("Precision at k: {}%, runtime: {}s".format(round(100*precision_k, 2), round(end_t - start_t, 5)))
     
-    precision_k_list.append(precision_k)
-    runtime_list.append(end_t - start_t)
-
+    lightfm_precision_k_list.append(precision_k)
+    lightfm_runtime_list.append(end_t - start_t)
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-sns.lineplot(ax=axes[0], x=percent_train, y=precision_k_list)
+sns.lineplot(ax=axes[0], x=percent_train, y=lightfm_precision_k_list, label="LightFM")
+sns.lineplot(ax=axes[0], x=percent_train, y=als_precision_k_list, label="ALS")
 axes[0].set_title('Precision at k vs. % training set')
 axes[0].set_xlabel('% training set')
 axes[0].set_ylabel('Precision at k')
-sns.lineplot(ax=axes[1], x=percent_train, y=runtime_list)
+sns.lineplot(ax=axes[1], x=percent_train, y=lightfm_runtime_list, label="LightFM")
+sns.lineplot(ax=axes[1], x=percent_train, y=als_precision_k_list, label="ALS")
 axes[1].set_title('Runtime vs. % training set')
 axes[1].set_xlabel('% training set')
 axes[1].set_ylabel('Runtime')
+plt.legend()
+plt.show()
 
-
+"""
 # ==========================================================================
 # EXTENSION 2: COLD START PROBLEM
 # ==========================================================================
@@ -265,4 +327,5 @@ movies_df = movies_df.explode('genres')
 tags_df.drop('timestamp', axis=1, inplace=True)
 tags_df['tag'] = tags_df['tag'].map(lambda x: x.lower().split(' '))
 tags_df = tags_df.explode('tag')
-
+"""
+pass
