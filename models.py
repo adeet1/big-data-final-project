@@ -80,7 +80,7 @@ train_df = spark.read.csv("ratings-" + data_size + "-train.csv", header=True, sc
 val_df = spark.read.csv("ratings-" + data_size + "-val.csv", header=True, schema="rowIndex INT, userId DOUBLE, movieId DOUBLE, rating FLOAT, timestamp LONG")
 
 # Fit the model
-als = ALS(maxIter=5, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating")
+als = ALS(maxIter=16, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating")
 model = als.fit(train_df)
 
 def evaluate_ALS(model, users=users, n_recs=100):
