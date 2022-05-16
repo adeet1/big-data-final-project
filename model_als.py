@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from pyspark.ml.recommendation import ALS
+from pyspark.ml.recommendation import ALS, ALSModel
 from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.sql import functions as F
 
@@ -43,9 +43,19 @@ val_df_group = val_df_group.select("userId", "movieId")
 D = val_df_group.groupby("userId").agg(F.collect_list("movieId").alias("movies_rated")).collect()
 D = list(map(lambda row: row["movies_rated"], D))
 
+"""
 # Fit the model
 als = ALS(maxIter=16, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
 model = als.fit(train_df)
+
+# Save the fitted model
+model.save("als_model/")
+"""
+
+# Load the fitted model from memory
+print("Loading model...")
+model = ALSModel.load("als_model/")
+print("Loading model... DONE")
 
 def evaluate_ALS(model, users=users, n_recs=100):
     # Compute the movie recommendations for all users
