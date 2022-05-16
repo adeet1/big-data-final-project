@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 from pyspark.ml.recommendation import ALS, ALSModel
 from pyspark.mllib.evaluation import RankingMetrics
@@ -43,10 +44,6 @@ val_df_group = val_df_group.select("userId", "movieId")
 D = val_df_group.groupby("userId").agg(F.collect_list("movieId").alias("movies_rated")).collect()
 D = list(map(lambda row: row["movies_rated"], D))
 
-# Fit the model
-als = ALS(maxIter=16, regParam=0.01, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
-model = als.fit(train_df)
-
 """
 # Save the fitted model
 model.save("als_model_big/")
@@ -72,13 +69,33 @@ def evaluate_ALS(model, users=users, n_recs=100):
     pred_and_labels = spark.sparkContext.parallelize(list(zip(R_val, D)))
     return pred_and_labels
 
-pred_and_labels = evaluate_ALS(model)
+# Fit the model
+rank_values = np.array([10, 20, 30, 40, 50, 75, 100, 125, 150])
+precision_values = np.empty_like(rank_values).astype(float)
+map_values = np.empty_like(rank_values).astype(float)
+for i in range(rank_values.size):
+    r = rank_values[i]
+    als = ALS(maxIter=5, regParam=0.01, rank=r, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+    model = als.fit(train_df)
 
-metrics = RankingMetrics(pred_and_labels)
-print("ALS ----------------")
-print("Precision:", metrics.precisionAt(n_recs))
-print("MAP:", metrics.meanAveragePrecision)
-print("NDCG:", metrics.ndcgAt(n_recs))
+    pred_and_labels = evaluate_ALS(model)
+
+    metrics = RankingMetrics(pred_and_labels)
+    print("ALS rank {} ----------------".format(r))
+    print("Precision:", metrics.precisionAt(n_recs))
+    print("MAP:", metrics.meanAveragePrecision)
+
+    precision_values[i] = metrics.precisionAt(n_recs)
+    map_values[i] = metrics.meanAveragePrecision
+
+print(rank_values)
+print(precision_values)
+print(map_values)
+
+plt.figure()
+plt.plot(rank_values, precision_values, label="Precision at k")
+plt.plot(rank_values, map_values, label="MAP")
+plt.show()
 
 # For validation users, compute squared loss for each user (how good our recommendations are)
 val_pred = model.transform(val_df).select("userId", "movieId", "rating", "prediction")
