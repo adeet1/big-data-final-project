@@ -13,7 +13,7 @@ spark = SparkSession.builder.appName('part1').getOrCreate()
 # ==========================================================================
 
 data_size = "small"
-hdfs = True
+hdfs = False
 
 prefix = "hdfs:/user/ajp756/" if hdfs else ""
 
@@ -43,19 +43,19 @@ val_df_group = val_df_group.select("userId", "movieId")
 D = val_df_group.groupby("userId").agg(F.collect_list("movieId").alias("movies_rated")).collect()
 D = list(map(lambda row: row["movies_rated"], D))
 
-"""
 # Fit the model
-als = ALS(maxIter=16, regParam=0.02, rank=75, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+als = ALS(maxIter=16, regParam=0.01, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
 model = als.fit(train_df)
 
-# Save the fitted model
-model.save("als_model/")
 """
+# Save the fitted model
+model.save("als_model_big/")
 
 # Load the fitted model from memory
 print("Loading model...")
-model = ALSModel.load("als_model/")
+model = ALSModel.load("als_model_big/")
 print("Loading model... DONE")
+"""
 
 def evaluate_ALS(model, users=users, n_recs=100):
     # Compute the movie recommendations for all users
