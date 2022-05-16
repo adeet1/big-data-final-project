@@ -54,12 +54,6 @@ def lightfm_preprocessing(train_df, val_df):
     val_interactions, val_w = lfm_object.build_interactions(data)
     
     return train_interactions, train_w, val_interactions, val_w
-    
-train_interactions, train_w, val_interactions, val_w = lightfm_preprocessing(train_df, val_df)
-  
-model = LightFM(loss='warp', no_components=75, user_alpha=0.02).fit(interactions=train_interactions, sample_weight=train_w, epochs=1)
-
-precision_k = precision_at_k(model, val_interactions, k=100).mean()
 
 # ==========================================================================
 # LIGHTFM VS. ALS
