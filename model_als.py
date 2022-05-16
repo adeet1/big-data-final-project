@@ -69,7 +69,7 @@ def evaluate_ALS(model, users=users, n_recs=100):
     pred_and_labels = spark.sparkContext.parallelize(list(zip(R_val, D)))
     return pred_and_labels
 
-# Fit the model
+# Fit the model (try different ranks)
 rank_values = np.array([10, 20, 30, 40, 50, 75, 100, 125, 150])
 precision_values = np.empty_like(rank_values).astype(float)
 map_values = np.empty_like(rank_values).astype(float)
@@ -95,6 +95,36 @@ print(map_values)
 plt.figure()
 plt.plot(rank_values, precision_values, label="Precision at k")
 plt.plot(rank_values, map_values, label="MAP")
+plt.show()
+
+# Fit the model (try different regParams)
+reg_values = np.array([0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.])
+precision_values = np.empty_like(reg_values).astype(float)
+map_values = np.empty_like(reg_values).astype(float)
+for i in range(reg_values.size):
+    r = reg_values[i]
+    als = ALS(maxIter=5, regParam=r, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+    model = als.fit(train_df)
+
+    pred_and_labels = evaluate_ALS(model)
+
+    metrics = RankingMetrics(pred_and_labels)
+    print("ALS regParam {} ----------------".format(r))
+    print("Precision:", metrics.precisionAt(n_recs))
+    print("MAP:", metrics.meanAveragePrecision)
+
+    precision_values[i] = metrics.precisionAt(n_recs)
+    map_values[i] = metrics.meanAveragePrecision
+
+print(reg_values)
+print(precision_values)
+print(map_values)
+
+plt.figure()
+plt.plot(reg_values, precision_values, label="Precision at k")
+plt.plot(reg_values, map_values, label="MAP")
+plt.xscale("log")
+plt.legend()
 plt.show()
 
 # For validation users, compute squared loss for each user (how good our recommendations are)
