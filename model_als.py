@@ -44,15 +44,6 @@ val_df_group = val_df_group.select("userId", "movieId")
 D = val_df_group.groupby("userId").agg(F.collect_list("movieId").alias("movies_rated")).collect()
 D = list(map(lambda row: row["movies_rated"], D))
 
-"""
-# Save the fitted model
-model.save("als_model_big/")
-
-# Load the fitted model from memory
-print("Loading model...")
-model = ALSModel.load("als_model_big/")
-print("Loading model... DONE")
-"""
 
 def evaluate_ALS(model, users=users, n_recs=100):
     # Compute the movie recommendations for all users
@@ -69,6 +60,17 @@ def evaluate_ALS(model, users=users, n_recs=100):
     pred_and_labels = spark.sparkContext.parallelize(list(zip(R_val, D)))
     return pred_and_labels
 
+als = ALS(maxIter=16, regParam=0.01, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+model = als.fit(train_df)
+
+pred_and_labels = evaluate_ALS(model)
+
+metrics = RankingMetrics(pred_and_labels)
+print("ALS --------------")
+print("Precision:", metrics.precisionAt(n_recs))
+print("MAP:", metrics.meanAveragePrecision)
+
+"""
 # Fit the model (try different ranks)
 rank_values = np.array([10, 20, 30, 40, 50, 75, 100, 125, 150])
 precision_values = np.empty_like(rank_values).astype(float)
@@ -126,6 +128,7 @@ plt.plot(reg_values, map_values, label="MAP")
 plt.xscale("log")
 plt.legend()
 plt.show()
+"""
 
 # For validation users, compute squared loss for each user (how good our recommendations are)
 val_pred = model.transform(val_df).select("userId", "movieId", "rating", "prediction")
