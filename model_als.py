@@ -44,7 +44,6 @@ val_df_group = val_df_group.select("userId", "movieId")
 D = val_df_group.groupby("userId").agg(F.collect_list("movieId").alias("movies_rated")).collect()
 D = list(map(lambda row: row["movies_rated"], D))
 
-
 def evaluate_ALS(model, users=users, n_recs=100):
     # Compute the movie recommendations for all users
     R = model.recommendForAllUsers(n_recs).select("userId", "recommendations.movieId")
@@ -76,6 +75,11 @@ metrics = RankingMetrics(pred_and_labels)
 print("ALS --------------")
 print("Precision:", metrics.precisionAt(n_recs))
 print("MAP:", metrics.meanAveragePrecision)
+
+# For validation users, compute squared loss for each user (how good our recommendations are)
+val_pred = model.transform(val_df).select("userId", "movieId", "rating", "prediction")
+val_pred = val_pred.toPandas()
+val_pred.to_csv("val_pred.csv")
 
 """
 # Fit the model (try different ranks)
@@ -136,34 +140,6 @@ plt.xscale("log")
 plt.legend()
 plt.show()
 """
-
-# Top worst predictions to return
-N_worst = 50
-
-# For validation users, compute squared loss for each user (how good our recommendations are)
-val_pred = model.transform(val_df).select("userId", "movieId", "rating", "prediction")
-val_pred = val_pred.toPandas()
-val_pred["sq_loss"] = (val_pred["rating"] - val_pred["prediction"])**2
-
-sq_loss_per_user = val_pred[["userId", "sq_loss"]].groupby("userId").mean().squeeze()
-sq_loss_per_user = sq_loss_per_user.sort_values(ascending=False)
-sq_loss_per_user.index = sq_loss_per_user.index.astype(int)
-worst_losses = sq_loss_per_user.head(N_worst)
-
-# For the users with the N_worst worst squared losses, look at the movies they rated and
-# the genres of those movies, as well as the number of movies rated by those users
-worst_pred_users = sorted(worst_losses.index.to_list())
-worst_pred = val_pred[val_pred["userId"].isin(worst_pred_users)]
-
-movies_df = spark.read.csv(prefix + "movies-" + data_size + ".csv", header=True,
-                           schema="movieId INT, title STRING, genres STRING").toPandas()
-movies_df.set_index("movieId", inplace=True)
-movies_df['genres'] = movies_df['genres'].map(lambda x: x.split('|'))
-
-worst_pred = worst_pred.join(other=movies_df, on="movieId", how="inner")
-worst_pred = worst_pred.sort_values("sq_loss", ascending=False)
-
-print(worst_pred.head(N_worst))
 
 """
 # ==========================================================================
