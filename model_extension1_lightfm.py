@@ -13,6 +13,7 @@ from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.sql import functions as F
 from pyspark.ml.recommendation import ALS
 import tqdm
+sns.set_style("darkgrid")
 
 spark = SparkSession.builder.appName('part1').getOrCreate()
 
@@ -125,13 +126,13 @@ for pct in tqdm.tqdm(percent_train):
     lightfm_runtime_list.append(end_t - start_t)
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-sns.lineplot(ax=axes[0], x=percent_train, y=lightfm_precision_k_list, label="LightFM")
-sns.lineplot(ax=axes[0], x=percent_train, y=als_precision_k_list, label="ALS")
+sns.lineplot(ax=axes[0], x=percent_train, y=lightfm_precision_k_list, color='green', marker='o', label="LightFM")
+sns.lineplot(ax=axes[0], x=percent_train, y=als_precision_k_list, color='black', marker='o', label="ALS")
 axes[0].set_title('Precision at k vs. % training set')
 axes[0].set_xlabel('% training set')
 axes[0].set_ylabel('Precision at k')
-sns.lineplot(ax=axes[1], x=percent_train, y=lightfm_runtime_list, label="LightFM")
-sns.lineplot(ax=axes[1], x=percent_train, y=als_runtime_list, label="ALS")
+sns.lineplot(ax=axes[1], x=percent_train, y=lightfm_runtime_list, color='green', marker='o', label="LightFM")
+sns.lineplot(ax=axes[1], x=percent_train, y=als_runtime_list, color='black', marker='o', label="ALS")
 axes[1].set_title('Runtime vs. % training set')
 axes[1].set_xlabel('% training set')
 axes[1].set_yscale("log")
