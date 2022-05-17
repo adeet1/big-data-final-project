@@ -60,8 +60,15 @@ def evaluate_ALS(model, users=users, n_recs=100):
     pred_and_labels = spark.sparkContext.parallelize(list(zip(R_val, D)))
     return pred_and_labels
 
-als = ALS(maxIter=16, regParam=0.01, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
-model = als.fit(train_df)
+model = None
+if data_size == "small":
+    als = ALS(maxIter=16, regParam=0.01, rank=110, userCol="userId", itemCol="movieId", ratingCol="rating", coldStartStrategy="drop")
+    model = als.fit(train_df)
+elif data_size == "big":
+    # Load the fitted model from memory
+    print("Loading model...")
+    model = ALSModel.load("als_model_big/")
+    print("Loading model... DONE")
 
 pred_and_labels = evaluate_ALS(model)
 
