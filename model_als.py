@@ -7,7 +7,7 @@ from pyspark.mllib.evaluation import RankingMetrics
 from pyspark.sql import functions as F
 
 from pyspark.sql import SparkSession
-spark = SparkSession.builder.appName('part1').getOrCreate()
+spark = SparkSession.builder.appName('part1').config("spark.driver.memory", "11g").getOrCreate()
 
 # ==========================================================================
 # IMPORT DATA
@@ -53,10 +53,10 @@ def evaluate_ALS(model, users=users, n_recs=100):
     R_val = R.filter(R.userId.isin(users.tolist())).sort("userId")
 
     # Evaluate model on the validation users
-    R_val = R_val.select("movieId").collect()
-    R_val = list(map(lambda row: row.movieId, R_val))
-    R_val = list(map(lambda arr: np.array(arr).astype("double").tolist(), R_val)) # convert ints to floats
-
+    R_val = R_val.select("movieId") 
+    R_val = R_val.toPandas()
+    R_val = R_val["movieId"].tolist()
+    
     pred_and_labels = spark.sparkContext.parallelize(list(zip(R_val, D)))
     return pred_and_labels
 
